@@ -1,0 +1,76 @@
+name: Iris Model CI Pipeline
+
+on:
+pull_request:
+branches:
+- main # This workflow runs when a pull request targets the 'main' branch
+workflow_dispatch: # Allows manual triggering from the GitHub Actions tab
+
+jobs:
+build-and-test:
+runs-on: ubuntu-latest # Specifies the type of runner to use (GitHub-hosted virtual machine)
+
+permissions:
+  contents: write       # Required for CML to push plots, if any, or modify files (though we're mostly commenting)
+  pull-requests: write  # Crucially required for CML to comment on Pull Requests
+
+steps:
+  - name: Checkout code
+    uses: actions/checkout@v3 # Action to clone your repository into the runner
+
+  - name: Set up Python 3.9
+    uses: actions/setup-python@v4 # Action to set up a specific Python version
+    with:
+      python-version: '3.9' # We specify 3.9 as it's commonly stable and compatible
+
+  - name: Install CML (Continuous Machine Learning)
+    # This action installs the CML CLI tool itself.
+    # We removed 'cml' from requirements.txt because this action handles its setup.
+    uses: iterative/setup-cml@v2
+
+  - name: Install Python dependencies
+    # This installs all libraries listed in requirements.txt (scikit-learn, pandas, numpy, joblib, pytest)
+    # into the Python environment set up by 'setup-python'.
+    run: pip install -r requirements.txt
+
+  - name: Run Model Training and generate metrics
+    # This step executes your training script.
+    # It ensures that 'artifacts/model.joblib' and 'metrics.csv' are freshly generated
+    # within the GitHub Actions runner environment, ready for subsequent test steps.
+    run: python train.py
+
+  - name: Run Pytest Unit Tests
+    # Executes your pytest tests.
+    # --junitxml=test-results.xml creates an XML report for GitHub's UI.
+    # The output is also redirected to test_output.txt for inclusion in the CML report.
+    run: |
+      pytest --junitxml=test-results.xml > test_output.txt 2>&1
+      # Add a fallback message if test_output.txt is empty (e.g., all tests passed silently)
+      if [ ! -s test_output.txt ]; then echo "No detailed test output captured, or all tests passed without verbose output." > test_output.txt; fi
+
+  - name: Generate and Post CML Report
+    # This step uses CML to create a Markdown report and post it as a comment on the PR.
+    env:
+      REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub's built-in token, automatically provided and has necessary permissions
+    run: |
+      echo "## Iris Model CI/CD Report" > report.md
+      echo "" >> report.md
+
+      echo "### Unit Test Results" >> report.md
+      echo "\`\`\`" >> report.md
+      cat test_output.txt >> report.md
+      echo "\`\`\`" >> report.md
+      echo "" >> report.md
+
+      if [ -f metrics.csv ]; then
+        echo "### Model Performance Metrics" >> report.md
+        echo "\`\`\`csv" >> report.md
+        cat metrics.csv >> report.md
+        echo "\`\`\`" >> report.md
+        echo "" >> report.md
+      else
+        echo "Warning: metrics.csv not found for reporting." >> report.md
+      fi
+
+      # Use cml comment create to post the content of report.md to the Pull Request.
+      cml comment create report.md
