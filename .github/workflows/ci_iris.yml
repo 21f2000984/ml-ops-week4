@@ -1,0 +1,62 @@
+name: Iris Model CI Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main  # This workflow runs when a pull request targets the 'main' branch
+  workflow_dispatch:  # Allows manual triggering from the GitHub Actions tab
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest  # Specifies the type of runner to use (GitHub-hosted virtual machine)
+
+    permissions:
+      contents: write       # Required for CML to push plots, if any
+      pull-requests: write  # Required for CML to comment on PRs
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install CML (Continuous Machine Learning)
+        uses: iterative/setup-cml@v2
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Model Training and generate metrics
+        run: python train.py
+
+      - name: Run Pytest Unit Tests
+        run: |
+          pytest --junitxml=test-results.xml > test_output.txt 2>&1
+          if [ ! -s test_output.txt ]; then
+            echo "No detailed test output captured, or all tests passed without verbose output." > test_output.txt
+          fi
+
+      - name: Generate and Post CML Report
+        env:
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Iris Model CI/CD Report" > report.md
+          echo "" >> report.md
+          echo "### Unit Test Results" >> report.md
+          echo "\`\`\`" >> report.md
+          cat test_output.txt >> report.md
+          echo "\`\`\`" >> report.md
+          echo "" >> report.md
+          if [ -f metrics.csv ]; then
+            echo "### Model Performance Metrics" >> report.md
+            echo "\`\`\`csv" >> report.md
+            cat metrics.csv >> report.md
+            echo "\`\`\`" >> report.md
+            echo "" >> report.md
+          else
+            echo "Warning: metrics.csv not found for reporting." >> report.md
+          fi
+          cml comment create report.md
